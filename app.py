@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from fuzzywuzzy import fuzz
 from fuzzywuzzy import process
-import PyPDF2
+from PyPDF2 import PdfReader
 
 st.set_page_config(page_title="Bill Tracker System", layout="wide", initial_sidebar_state="expanded")
 
@@ -43,62 +43,97 @@ MASTER_ITEMS = {
 # ===== FUNCTIONS =====
 def extract_pdf_data(pdf_file):
     """Extract data dari PDF bill"""
+
     try:
-        pdf_reader = PyPDF2.PdfReader(pdf_file)
+        pdf_reader = PdfReader(pdf_file)
+
         text = ""
+
         for page in pdf_reader.pages:
-            text += page.extract_text()
-        
-        lines = text.split('\n')
+            page_text = page.extract_text()
+
+            if page_text:
+                text += page_text + "\n"
+
+
         bill_data = {
-            'bill_no': '',
-            'date': '',
-            'items': []
+            "bill_no": "",
+            "date": "",
+            "items": []
         }
-        
-        # Extract bill number dan date
+
+
+        lines = text.split("\n")
+
+
+        # Bill number & date
         for line in lines:
-            if 'CASH SALE No' in line:
-                match = re.search(r'CS-\d+', line)
+
+            if "CS-" in line:
+                match = re.search(
+                    r"CS-\d+",
+                    line
+                )
+
                 if match:
-                    bill_data['bill_no'] = match.group()
-            if 'Date' in line and ':' in line:
-                date_part = line.split(':')[-1].strip()
-                if len(date_part) > 0:
-                    bill_data['date'] = date_part[:10]
-        
-        # Extract items
-        in_table = False
-        for i, line in enumerate(lines):
-            if 'Item' in line and 'Description' in line:
-                in_table = True
-                continue
-            
-            if in_table and line.strip() and 'RINGGIT' not in line and 'Notes' not in line:
-                parts = line.split()
-                if len(parts) >= 3:
-                    try:
-                        # Try to extract qty dan UOM
-                        qty_pattern = r'(\d+)\s+(PCS|PACK|PKT)'
-                        match = re.search(qty_pattern, line)
-                        if match:
-                            qty = int(match.group(1))
-                            uom = match.group(2)
-                            # Extract item description (everything before qty)
-                            desc = line[:match.start()].strip().split()[-1] if line[:match.start()].strip() else ''
-                            
-                            bill_data['items'].append({
-                                'item_code': parts[0],
-                                'description': line[:match.start()].strip(),
-                                'qty': qty,
-                                'uom': uom
-                            })
-                    except:
-                        pass
-        
+                    bill_data["bill_no"] = match.group()
+
+
+            if "Date" in line:
+
+                match = re.search(
+                    r"\d{2}/\d{2}/\d{4}",
+                    line
+                )
+
+                if match:
+                    bill_data["date"] = match.group()
+
+
+
+        # Item extraction
+        for line in lines:
+
+            qty_match = re.search(
+                r"(\d+)\s+(PCS|PACK|PKT)",
+                line
+            )
+
+            if qty_match:
+
+                qty = int(
+                    qty_match.group(1)
+                )
+
+                uom = qty_match.group(2)
+
+                description = line[
+                    :qty_match.start()
+                ].strip()
+
+
+                bill_data["items"].append(
+                    {
+                        "item_code": (
+                            description.split()[0]
+                            if description else ""
+                        ),
+                        "description": description,
+                        "qty": qty,
+                        "uom": uom
+                    }
+                )
+
+
         return bill_data
+
+
     except Exception as e:
-        st.error(f"Error extracting PDF: {str(e)}")
+
+        st.error(
+            f"PDF Error: {e}"
+        )
+
         return None
 
 def match_supplier_to_order(supplier_name, supplier_code):
