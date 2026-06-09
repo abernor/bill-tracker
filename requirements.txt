@@ -1,15 +1,14 @@
-import streamlit as st
-import pandas as pd
-import json
-from datetime import datetime
-import re
-from pathlib import Path
+streamlit==1.28.1
+pandas==2.0.3
 
-from fuzzywuzzy import fuzz
-from fuzzywuzzy import process
+PyPDF2==3.0.1
 
-from PyPDF2 import PdfReader
+fuzzywuzzy==0.18.0
+python-Levenshtein==0.27.1
 
-from google.cloud import secretmanager
-import gspread
-from google.oauth2.service_account import Credentials
+google-cloud-secret-manager==2.20.2
+google-auth==2.29.0
+google-auth-oauthlib==1.2.0
+google-api-python-client==2.130.0
+
+gspread==6.1.2
