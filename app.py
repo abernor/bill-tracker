@@ -1,18 +1,59 @@
-# force rebuild 0013
+# Bill Tracker v2.1 - Safe Google Sheets Integration
 import streamlit as st
 import pandas as pd
 import json
+import os
 from datetime import datetime
 import re
-from pathlib import Path
 from fuzzywuzzy import fuzz
-from fuzzywuzzy import process
 from PyPDF2 import PdfReader
+import gspread
+from google.oauth2 import service_account
 
 st.set_page_config(page_title="Bill Tracker System", layout="wide", initial_sidebar_state="expanded")
-st.write("VERSION: PDF2 FIX")
+st.write("VERSION: Google Sheets v2.1 (Safe)")
 
-# ===== MASTER DATA (untuk demo, nanti replace dengan Google Sheets) =====
+# ===== GOOGLE SHEETS CONFIG (Safe - from environment variable) =====
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1SPd9zV8rB2sxOdFsfAfQeYhpu2PU3G9haJQ3UU1ce6s/edit"
+
+@st.cache_resource
+def load_google_sheet():
+    """Load order data from Google Sheets using environment variable credentials"""
+    try:
+        # Read credentials from environment variable (set in Cloud Run)
+        creds_json_str = os.environ.get('GOOGLE_CREDENTIALS_JSON')
+
+        if not creds_json_str:
+            st.error("❌ GOOGLE_CREDENTIALS_JSON environment variable not set")
+            return None
+
+        # Parse JSON credentials
+        creds_dict = json.loads(creds_json_str)
+
+        # Authenticate with Google Sheets
+        scope = ['https://www.googleapis.com/auth/spreadsheets']
+        creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=scope)
+        client = gspread.authorize(creds)
+
+        # Open sheet and load data
+        sheet = client.open_by_url(SHEET_URL)
+        worksheet = sheet.worksheet(0)
+        data = worksheet.get_all_records()
+
+        st.success(f"✅ Loaded {len(data)} items from Google Sheets")
+        return pd.DataFrame(data)
+
+    except json.JSONDecodeError:
+        st.error("❌ Invalid JSON in GOOGLE_CREDENTIALS_JSON")
+        return None
+    except Exception as e:
+        st.error(f"❌ Error loading Google Sheet: {str(e)}")
+        return None
+
+# Load order data
+df_orders = load_google_sheet()
+
+# ===== MASTER DATA (Item name mapping) =====
 MASTER_ITEMS = {
     'PUCUK': {'supplier_names': ['PUCHOK GORENG NIPIS', 'DP'], 'unit': 'PCS'},
     'BALL': {'supplier_names': ['QL BEBOLA GORENG', 'QLBG'], 'unit': 'PCS'},
@@ -29,9 +70,8 @@ MASTER_ITEMS = {
     'FISH N SOY': {'supplier_names': ['QL FISH & SOY', 'QLFS'], 'unit': 'PACK'},
     'ROUND CAKE PUTIH': {'supplier_names': ['IKAN KEK BULAT PUTIH', 'A3'], 'unit': 'PCS'},
     'ROUNDCAKE GORENG': {'supplier_names': ['QL IKAN BULAT GORENG', 'STP'], 'unit': 'PACK'},
-    'OTAK AYAM': {'supplier_names': ['AYAM ROLL', 'KSA'], 'unit': 'PACK'},
+    'AYAM ROLL': {'supplier_names': ['AYAM ROLL', 'KSA'], 'unit': 'PACK'},
     'OTAK ROLL': {'supplier_names': ['OTAK ROLL', 'KSO'], 'unit': 'PACK'},
-    'OTAK MERAH': {'supplier_names': ['OTAK ROLL', 'KSO'], 'unit': 'PACK'},
     'KUE TIAW': {'supplier_names': ['KUIH TIAU', 'WKT'], 'unit': 'PCS'},
     'BOLA PUTIH': {'supplier_names': ['IKAN BOLA PUTIH', 'A1'], 'unit': 'PCS'},
     'KETAM SEPIT': {'supplier_names': ['QL CRAB CLAW', 'QLCC'], 'unit': 'PACK'},
@@ -45,18 +85,13 @@ MASTER_ITEMS = {
 # ===== FUNCTIONS =====
 def extract_pdf_data(pdf_file):
     """Extract data dari PDF bill"""
-
     try:
         pdf_reader = PdfReader(pdf_file)
-
         text = ""
-
         for page in pdf_reader.pages:
             page_text = page.extract_text()
-
             if page_text:
                 text += page_text + "\n"
-
 
         bill_data = {
             "bill_no": "",
@@ -64,211 +99,160 @@ def extract_pdf_data(pdf_file):
             "items": []
         }
 
-
         lines = text.split("\n")
 
-
-        # Bill number & date
+        # Extract bill number & date
         for line in lines:
-
             if "CS-" in line:
-                match = re.search(
-                    r"CS-\d+",
-                    line
-                )
-
+                match = re.search(r"CS-\d+", line)
                 if match:
                     bill_data["bill_no"] = match.group()
 
-
             if "Date" in line:
-
-                match = re.search(
-                    r"\d{2}/\d{2}/\d{4}",
-                    line
-                )
-
+                match = re.search(r"\d{2}/\d{2}/\d{4}", line)
                 if match:
                     bill_data["date"] = match.group()
 
-
-
-        # Item extraction
+        # Extract items
         for line in lines:
-
-            qty_match = re.search(
-                r"(\d+)\s+(PCS|PACK|PKT)",
-                line
-            )
-
+            qty_match = re.search(r"(\d+)\s+(PCS|PACK|PKT)", line)
             if qty_match:
-
-                qty = int(
-                    qty_match.group(1)
-                )
-
+                qty = int(qty_match.group(1))
                 uom = qty_match.group(2)
+                description = line[:qty_match.start()].strip()
 
-                description = line[
-                    :qty_match.start()
-                ].strip()
-
-
-                bill_data["items"].append(
-                    {
-                        "item_code": (
-                            description.split()[0]
-                            if description else ""
-                        ),
-                        "description": description,
-                        "qty": qty,
-                        "uom": uom
-                    }
-                )
-
+                bill_data["items"].append({
+                    "item_code": description.split()[0] if description else "",
+                    "description": description,
+                    "qty": qty,
+                    "uom": uom
+                })
 
         return bill_data
 
-
     except Exception as e:
-
-        st.error(
-            f"PDF Error: {e}"
-        )
-
+        st.error(f"PDF Error: {e}")
         return None
 
-def match_supplier_to_order(supplier_name, supplier_code):
-    """Match supplier item name/code ke order item name"""
+def match_supplier_to_order(supplier_name):
+    """Match supplier item name ke order item name"""
     best_match = None
     best_score = 0
-    
+
     for order_item, info in MASTER_ITEMS.items():
-        # Check supplier names
         for supplier_variant in info['supplier_names']:
             score = fuzz.token_set_ratio(supplier_name.upper(), supplier_variant.upper())
             if score > best_score:
                 best_score = score
                 best_match = order_item
-        
-        # Check supplier codes
-        if supplier_code.upper() in info['supplier_names']:
-            return order_item
-    
+
     if best_score >= 80:
         return best_match
-    
+
     return None
 
-def calculate_cumulative(order_id, order_list, bill_history):
-    """Calculate cumulative qty untuk order"""
-    order = order_list[order_list['Order ID'] == order_id].iloc[0]
-    
-    previous_bills = bill_history[bill_history['Order ID'] == order_id]
-    cumulative = {}
-    
-    for qty_col in ['Qty1', 'Qty2', 'Qty3', 'Qty4', 'Qty5']:
-        total_qty = order[qty_col] if order[qty_col] > 0 else 0
-        billed_qty = previous_bills[qty_col].sum() if len(previous_bills) > 0 else 0
-        
-        cumulative[qty_col] = {
-            'expected': total_qty,
-            'billed': billed_qty,
-            'pending': total_qty - billed_qty
-        }
-    
-    return cumulative
+def get_order_quantities(item_name):
+    """Get expected quantities dari Google Sheet untuk item"""
+    if df_orders is None:
+        return {}
+
+    item_row = df_orders[df_orders['Item'].str.upper() == item_name.upper()]
+    if len(item_row) == 0:
+        return {}
+
+    row = item_row.iloc[0]
+    return {
+        'Qty1': int(row.get('Qty1', 0)) if pd.notna(row.get('Qty1')) else 0,
+        'Qty2': int(row.get('Qty2', 0)) if pd.notna(row.get('Qty2')) else 0,
+        'Qty3': int(row.get('Qty3', 0)) if pd.notna(row.get('Qty3')) else 0,
+        'Qty4': int(row.get('Qty4', 0)) if pd.notna(row.get('Qty4')) else 0,
+        'Qty5': int(row.get('Qty5', 0)) if pd.notna(row.get('Qty5')) else 0,
+    }
 
 # ===== UI =====
 st.title("📊 Bill Verification & Tracking System")
 st.subheader("Chiang Tar Enterprise - ROSMIE GLOBAL ENTERPRISE")
 
-tabs = st.tabs(["📤 Upload Bill", "📋 Master Data", "📊 Dashboard", "📈 Reports"])
+tabs = st.tabs(["📤 Upload Bill", "📋 Orders", "📊 Dashboard", "📈 Reports"])
 
 with tabs[0]:
     st.header("Upload & Process Bill")
-    
+
     col1, col2 = st.columns(2)
-    
+
     with col1:
         st.subheader("1️⃣ Upload PDF Bill")
         uploaded_file = st.file_uploader("Choose PDF bill file", type=['pdf'])
-        
+
         if uploaded_file:
             st.success(f"✓ File uploaded: {uploaded_file.name}")
-            
+
             with st.spinner("Extracting data from PDF..."):
                 bill_data = extract_pdf_data(uploaded_file)
-            
+
             if bill_data:
                 st.success(f"✓ Bill No: {bill_data['bill_no']}")
                 st.success(f"✓ Date: {bill_data['date']}")
                 st.success(f"✓ Items extracted: {len(bill_data['items'])}")
-    
+
     with col2:
-        st.subheader("2️⃣ Select Order Reference")
-        order_id = st.text_input("Enter Order ID (e.g., PO-001):")
+        st.subheader("2️⃣ Select Qty Combination")
         qty_combo = st.multiselect(
             "Which Qty combination for this bill?",
             options=['Qty1', 'Qty2', 'Qty3', 'Qty4', 'Qty5'],
             default=['Qty1', 'Qty2']
         )
-    
-    if uploaded_file and order_id and qty_combo:
+
+    if uploaded_file and qty_combo and bill_data:
         st.divider()
-        st.subheader("3️⃣ Review Extracted Data")
-        
-        if bill_data:
-            df_items = pd.DataFrame(bill_data['items'])
-            
-            # Add matching results
-            df_items['Order Item'] = df_items.apply(
-                lambda row: match_supplier_to_order(row['description'], row['item_code']),
-                axis=1
-            )
-            
-            df_items['Match Status'] = df_items['Order Item'].apply(
-                lambda x: '✓ MATCHED' if x else '❌ NO MATCH'
-            )
-            
-            st.dataframe(df_items, use_container_width=True)
-            
-            if st.button("✅ Confirm & Save to Tracker", key="confirm_bill"):
-                st.success("Bill saved to tracker! Tracking updated.")
-                st.balloons()
+        st.subheader("3️⃣ Review & Match Results")
+
+        df_items = pd.DataFrame(bill_data['items'])
+
+        # Add matching results
+        df_items['Order Item'] = df_items['description'].apply(match_supplier_to_order)
+
+        df_items['Match Status'] = df_items['Order Item'].apply(
+            lambda x: '✓ MATCHED' if x else '❌ NO MATCH'
+        )
+
+        # Add expected quantities
+        expected_qty_list = []
+        for order_item in df_items['Order Item']:
+            if order_item:
+                qty_dict = get_order_quantities(order_item)
+                qty_sum = sum([qty_dict.get(q, 0) for q in qty_combo])
+                expected_qty_list.append(qty_sum)
+            else:
+                expected_qty_list.append(0)
+
+        df_items['Expected Qty'] = expected_qty_list
+        df_items['Variance'] = df_items['qty'] - df_items['Expected Qty']
+
+        st.dataframe(df_items[['description', 'qty', 'Order Item', 'Expected Qty', 'Variance', 'Match Status']], use_container_width=True)
+
+        # Check for discrepancies
+        discrepancies = df_items[df_items['Variance'] != 0]
+        if len(discrepancies) > 0:
+            st.warning(f"⚠️ Found {len(discrepancies)} discrepancies!")
+            st.dataframe(discrepancies, use_container_width=True)
+
+        if st.button("✅ Confirm & Save to Tracker", key="confirm_bill"):
+            st.success("Bill saved to tracker! Tracking updated.")
+            st.balloons()
 
 with tabs[1]:
-    st.header("Master Items Mapping")
-    st.info("This is the mapping between your Order names and Supplier names")
-    
-    df_master = pd.DataFrame([
-        {
-            'Order Item': item,
-            'Supplier Names': ', '.join(info['supplier_names']),
-            'Unit': info['unit']
-        }
-        for item, info in MASTER_ITEMS.items()
-    ])
-    
-    st.dataframe(df_master, use_container_width=True)
-    
-    st.divider()
-    st.subheader("✏️ Add/Edit Item Mapping")
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        new_order_item = st.text_input("Order Item Name")
-    with col2:
-        new_supplier_names = st.text_input("Supplier Names (comma separated)")
-    with col3:
-        new_unit = st.selectbox("Unit", ['PCS', 'PACK', 'PKT'])
-    
-    if st.button("Add Item Mapping"):
-        st.success(f"✓ Added: {new_order_item}")
+    st.header("Order List from Google Sheets")
+
+    if df_orders is not None:
+        st.dataframe(df_orders, use_container_width=True)
+        st.info(f"Total items loaded: {len(df_orders)}")
+    else:
+        st.error("Could not load orders from Google Sheets. Check environment variable.")
 
 with tabs[2]:
     st.header("Dashboard Overview")
-    
+
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("Total Bills", "0")
@@ -278,39 +262,10 @@ with tabs[2]:
         st.metric("Discrepancies", "0")
     with col4:
         st.metric("Over-billing", "0")
-    
-    st.divider()
-    st.subheader("Recent Bills")
-    st.info("No bills processed yet. Upload a bill to get started.")
 
 with tabs[3]:
     st.header("Reports & Analytics")
-    
-    st.subheader("1️⃣ Cumulative Tracking by Order")
-    st.info("Select an order to see cumulative quantities billed vs expected")
-    
-    order_filter = st.selectbox("Select Order ID:", options=['PO-001', 'PO-002', 'PO-003'])
-    
-    if order_filter:
-        st.write(f"Tracking for: **{order_filter}**")
-        
-        # Sample data
-        tracking_data = {
-            'Qty Combo': ['Qty1+2', 'Qty3', 'Qty4', 'Qty5'],
-            'Expected': [100, 50, 0, 50],
-            'Billed': [100, 0, 0, 0],
-            'Pending': [0, 50, 0, 50],
-            'Status': ['✓ COMPLETE', '⏳ PENDING', '⏳ PENDING', '⏳ PENDING']
-        }
-        
-        st.dataframe(pd.DataFrame(tracking_data), use_container_width=True)
-    
-    st.divider()
-    st.subheader("2️⃣ Export Report")
-    
-    if st.button("📥 Export to Excel"):
-        st.success("Report exported successfully!")
+    st.info("Reports feature coming soon...")
 
 st.divider()
-st.caption("Bill Tracker System v1.0 | Powered by Streamlit")
-
+st.caption("Bill Tracker System v2.1 | Google Sheets Integration | Powered by Streamlit")
