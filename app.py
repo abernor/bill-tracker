@@ -24,9 +24,7 @@ def load_credentials_from_secret():
     try:
         client = secretmanager.SecretManagerServiceClient()
 
-        secret_path = (
-            f"projects/{PROJECT_ID}/secrets/{SECRET_NAME}/versions/latest"
-        )
+        secret_path = f"projects/{PROJECT_ID}/secrets/{SECRET_NAME}/versions/latest"
 
         response = client.access_secret_version(
             request={"name": secret_path}
@@ -37,9 +35,47 @@ def load_credentials_from_secret():
         return json.loads(secret_json)
 
     except Exception as e:
-        st.error(f"Secret Manager Error: {e}")
+        st.error(f"❌ Secret Manager Error: {e}")
         return None
-       @st.cache_resource
+
+
+@st.cache_resource
+def load_google_sheet():
+    """Load Google Sheet"""
+    try:
+        creds_dict = load_credentials_from_secret()
+
+        if creds_dict is None:
+            return None
+
+        scope = [
+            "https://www.googleapis.com/auth/spreadsheets"
+        ]
+
+        creds = service_account.Credentials.from_service_account_info(
+            creds_dict,
+            scopes=scope
+        )
+
+        client = gspread.authorize(creds)
+
+        sheet = client.open_by_url(SHEET_URL)
+
+        worksheet = sheet.get_worksheet(0)
+
+        data = worksheet.get_all_records()
+
+        st.success(f"✅ Loaded {len(data)} items from Google Sheet")
+
+        return pd.DataFrame(data)
+
+    except Exception as e:
+        st.error(f"❌ Google Sheet Error: {e}")
+        return None
+
+
+# Load order data
+df_orders = load_google_sheet()
 def load_google_sheet():
     """Load order data dari Google Sheets"""
     try:
