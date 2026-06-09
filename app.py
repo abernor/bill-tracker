@@ -9,6 +9,7 @@ from fuzzywuzzy import process
 from PyPDF2 import PdfReader
 
 st.set_page_config(page_title="Bill Tracker System", layout="wide", initial_sidebar_state="expanded")
+st.write("VERSION: PDF2 FIX")
 
 # ===== MASTER DATA (untuk demo, nanti replace dengan Google Sheets) =====
 MASTER_ITEMS = {
