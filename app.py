@@ -39,19 +39,18 @@ def load_credentials_from_secret():
     except Exception as e:
         st.error(f"Secret Manager Error: {e}")
         return None
-        @st.cache_resource
+       @st.cache_resource
 def load_google_sheet():
     """Load order data dari Google Sheets"""
     try:
         creds_dict = load_credentials_from_secret()
 
         if creds_dict is None:
-            st.error("❌ Credential kosong")
+            st.error("❌ Could not load credentials")
             return None
 
         scope = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
+            "https://www.googleapis.com/auth/spreadsheets"
         ]
 
         creds = service_account.Credentials.from_service_account_info(
@@ -63,23 +62,23 @@ def load_google_sheet():
 
         sheet = client.open_by_url(SHEET_URL)
 
-        worksheet = sheet.sheet1
+        worksheet = sheet.get_worksheet(0)
 
         data = worksheet.get_all_records()
 
         st.success(
-            f"✅ Google Sheet connected: {len(data)} items loaded"
+            f"✅ Loaded {len(data)} items from Google Sheets"
         )
 
         return pd.DataFrame(data)
 
     except Exception as e:
-    import traceback
+        import traceback
 
-    st.error("❌ Error loading Google Sheet")
-    st.code(traceback.format_exc())
+        st.error("❌ Error loading Google Sheet:")
+        st.code(traceback.format_exc())
 
-    return None
+        return None
 # Load order data
 df_orders = load_google_sheet()
 
