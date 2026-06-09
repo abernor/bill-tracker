@@ -22,28 +22,41 @@ SECRET_NAME = "bill-tracker-credentials"
 def load_google_sheet():
     """Load order data dari Google Sheets via Secret Manager"""
     try:
-        # Load credentials dari Secret Manager
         sm_client = secretmanager.SecretManagerServiceClient()
+
         secret_path = f"projects/{PROJECT_ID}/secrets/{SECRET_NAME}/versions/latest"
-        response = sm_client.access_secret_version(request={"name": secret_path})
-        secret_string = response.payload.data.decode('UTF-8')
+
+        response = sm_client.access_secret_version(
+            request={"name": secret_path}
+        )
+
+        secret_string = response.payload.data.decode("UTF-8")
+
         creds_dict = json.loads(secret_string)
 
-        # Authenticate dengan Google Sheets
-        scope = ['https://www.googleapis.com/auth/spreadsheets']
-        creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=scope)
+        scope = [
+            "https://www.googleapis.com/auth/spreadsheets"
+        ]
+
+        creds = service_account.Credentials.from_service_account_info(
+            creds_dict,
+            scopes=scope
+        )
+
         client = gspread.authorize(creds)
 
-        # Open sheet dan load data
         sheet = client.open_by_url(SHEET_URL)
-        worksheet = sheet.worksheet(0)
+
+        worksheet = sheet.get_worksheet(0)
+
         data = worksheet.get_all_records()
 
         st.success(f"✅ Loaded {len(data)} items from Google Sheets")
+
         return pd.DataFrame(data)
 
     except Exception as e:
-        st.error(f"❌ Error loading Google Sheet: {str(e)}")
+        st.error(f"❌ Error loading Google Sheet: {e}")
         return None
 
 # Load order data
