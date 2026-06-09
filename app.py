@@ -18,24 +18,40 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/1SPd9zV8rB2sxOdFsfAfQeYhpu2P
 PROJECT_ID = "gen-lang-client-0946610758"
 SECRET_NAME = "bill-tracker-credentials"
 
-@st.cache_resource
-def load_google_sheet():
-    """Load order data dari Google Sheets via Secret Manager"""
+
+def load_credentials_from_secret():
+    """Load Google credential dari Secret Manager"""
     try:
-        sm_client = secretmanager.SecretManagerServiceClient()
+        client = secretmanager.SecretManagerServiceClient()
 
-        secret_path = f"projects/{PROJECT_ID}/secrets/{SECRET_NAME}/versions/latest"
+        secret_path = (
+            f"projects/{PROJECT_ID}/secrets/{SECRET_NAME}/versions/latest"
+        )
 
-        response = sm_client.access_secret_version(
+        response = client.access_secret_version(
             request={"name": secret_path}
         )
 
-        secret_string = response.payload.data.decode("UTF-8")
+        secret_json = response.payload.data.decode("UTF-8")
 
-        creds_dict = json.loads(secret_string)
+        return json.loads(secret_json)
+
+    except Exception as e:
+        st.error(f"Secret Manager Error: {e}")
+        return None
+        @st.cache_resource
+def load_google_sheet():
+    """Load order data dari Google Sheets"""
+    try:
+        creds_dict = load_credentials_from_secret()
+
+        if creds_dict is None:
+            st.error("❌ Credential kosong")
+            return None
 
         scope = [
-            "https://www.googleapis.com/auth/spreadsheets"
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
         ]
 
         creds = service_account.Credentials.from_service_account_info(
@@ -47,18 +63,19 @@ def load_google_sheet():
 
         sheet = client.open_by_url(SHEET_URL)
 
-        worksheet = sheet.get_worksheet(0)
+        worksheet = sheet.sheet1
 
         data = worksheet.get_all_records()
 
-        st.success(f"✅ Loaded {len(data)} items from Google Sheets")
+        st.success(
+            f"✅ Google Sheet connected: {len(data)} items loaded"
+        )
 
         return pd.DataFrame(data)
 
     except Exception as e:
         st.error(f"❌ Error loading Google Sheet: {e}")
         return None
-
 # Load order data
 df_orders = load_google_sheet()
 
