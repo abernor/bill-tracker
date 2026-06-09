@@ -19,40 +19,36 @@ PROJECT_ID = "gen-lang-client-0946610758"
 SECRET_NAME = "bill-tracker-credentials"
 
 @st.cache_resource
-def load_credentials_from_secret():
-    """Load credentials dari Google Secret Manager"""
-    try:
-        client = secretmanager.SecretManagerServiceClient()
-        secret_path = f"projects/{PROJECT_ID}/secrets/{SECRET_NAME}/versions/latest"
-        response = client.access_secret_version(request={"name": secret_path})
-        secret_string = response.payload.data.decode('UTF-8')
-        return json.loads(secret_string)
-    except Exception as e:
-        st.error(f"❌ Error loading from Secret Manager: {str(e)}")
-        return None
-
-@st.cache_resource
 def load_google_sheet():
-    """Load order data dari Google Sheets"""
     try:
-        # Get credentials dari Secret Manager
         creds_dict = load_credentials_from_secret()
 
         if not creds_dict:
-            st.error("❌ Could not load credentials from Secret Manager")
+            st.error("❌ Could not load credentials")
             return None
 
-        # Authenticate dengan Google Sheets
-        scope = ['https://www.googleapis.com/auth/spreadsheets']
-        creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=scope)
+        scope = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+
+        creds = Credentials.from_service_account_info(
+            creds_dict,
+            scopes=scope
+        )
+
         client = gspread.authorize(creds)
 
-        # Open sheet dan load data
-        sheet = client.open_by_url(SHEET_URL)
-        worksheet = sheet.worksheet(0)
+        sheet = client.open_by_key(
+            "1SPd9zV8rPszxOdfSfAQeYhpu2PU3GhaJQ3UU1ce6s"
+        )
+
+        worksheet = sheet.sheet1
+
         data = worksheet.get_all_records()
 
         st.success(f"✅ Loaded {len(data)} items from Google Sheets")
+
         return pd.DataFrame(data)
 
     except Exception as e:
