@@ -74,8 +74,12 @@ def load_google_sheet():
         return pd.DataFrame(data)
 
     except Exception as e:
-        st.error(f"❌ Error loading Google Sheet: {e}")
-        return None
+    import traceback
+
+    st.error("❌ Error loading Google Sheet")
+    st.code(traceback.format_exc())
+
+    return None
 # Load order data
 df_orders = load_google_sheet()
 
