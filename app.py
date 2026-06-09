@@ -1,4 +1,4 @@
-# Bill Tracker v2.2 - Google Secret Manager Integration
+# Bill Tracker v2.3 - Fixed Secret Manager
 import streamlit as st
 import pandas as pd
 import json
@@ -11,44 +11,35 @@ from google.oauth2 import service_account
 from google.cloud import secretmanager
 
 st.set_page_config(page_title="Bill Tracker System", layout="wide", initial_sidebar_state="expanded")
-st.write("VERSION: Google Secret Manager v2.2")
+st.write("VERSION: Google Secret Manager v2.3 (Fixed)")
 
-# ===== GOOGLE SHEETS CONFIG =====
+# ===== CONFIG =====
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1SPd9zV8rB2sxOdFsfAfQeYhpu2PU3G9haJQ3UU1ce6s/edit"
 PROJECT_ID = "gen-lang-client-0946610758"
 SECRET_NAME = "bill-tracker-credentials"
 
 @st.cache_resource
 def load_google_sheet():
+    """Load order data dari Google Sheets via Secret Manager"""
     try:
-        creds_dict = load_credentials_from_secret()
+        # Load credentials dari Secret Manager
+        sm_client = secretmanager.SecretManagerServiceClient()
+        secret_path = f"projects/{PROJECT_ID}/secrets/{SECRET_NAME}/versions/latest"
+        response = sm_client.access_secret_version(request={"name": secret_path})
+        secret_string = response.payload.data.decode('UTF-8')
+        creds_dict = json.loads(secret_string)
 
-        if not creds_dict:
-            st.error("❌ Could not load credentials")
-            return None
-
-        scope = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
-
-        creds = Credentials.from_service_account_info(
-            creds_dict,
-            scopes=scope
-        )
-
+        # Authenticate dengan Google Sheets
+        scope = ['https://www.googleapis.com/auth/spreadsheets']
+        creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=scope)
         client = gspread.authorize(creds)
 
-        sheet = client.open_by_key(
-            "1SPd9zV8rPszxOdfSfAQeYhpu2PU3GhaJQ3UU1ce6s"
-        )
-
-        worksheet = sheet.sheet1
-
+        # Open sheet dan load data
+        sheet = client.open_by_url(SHEET_URL)
+        worksheet = sheet.worksheet(0)
         data = worksheet.get_all_records()
 
         st.success(f"✅ Loaded {len(data)} items from Google Sheets")
-
         return pd.DataFrame(data)
 
     except Exception as e:
@@ -58,7 +49,7 @@ def load_google_sheet():
 # Load order data
 df_orders = load_google_sheet()
 
-# ===== MASTER DATA (Item name mapping) =====
+# ===== MASTER DATA =====
 MASTER_ITEMS = {
     'PUCUK': {'supplier_names': ['PUCHOK GORENG NIPIS', 'DP'], 'unit': 'PCS'},
     'BALL': {'supplier_names': ['QL BEBOLA GORENG', 'QLBG'], 'unit': 'PCS'},
@@ -112,7 +103,6 @@ def extract_pdf_data(pdf_file):
                 match = re.search(r"CS-\d+", line)
                 if match:
                     bill_data["bill_no"] = match.group()
-
             if "Date" in line:
                 match = re.search(r"\d{2}/\d{2}/\d{4}", line)
                 if match:
@@ -125,7 +115,6 @@ def extract_pdf_data(pdf_file):
                 qty = int(qty_match.group(1))
                 uom = qty_match.group(2)
                 description = line[:qty_match.start()].strip()
-
                 bill_data["items"].append({
                     "item_code": description.split()[0] if description else "",
                     "description": description,
@@ -134,7 +123,6 @@ def extract_pdf_data(pdf_file):
                 })
 
         return bill_data
-
     except Exception as e:
         st.error(f"PDF Error: {e}")
         return None
@@ -151,13 +139,10 @@ def match_supplier_to_order(supplier_name):
                 best_score = score
                 best_match = order_item
 
-    if best_score >= 80:
-        return best_match
-
-    return None
+    return best_match if best_score >= 80 else None
 
 def get_order_quantities(item_name):
-    """Get expected quantities dari Google Sheet untuk item"""
+    """Get expected quantities dari Google Sheet"""
     if df_orders is None:
         return {}
 
@@ -182,16 +167,15 @@ tabs = st.tabs(["📤 Upload Bill", "📋 Orders", "📊 Dashboard", "📈 Repor
 
 with tabs[0]:
     st.header("Upload & Process Bill")
-
     col1, col2 = st.columns(2)
 
     with col1:
         st.subheader("1️⃣ Upload PDF Bill")
         uploaded_file = st.file_uploader("Choose PDF bill file", type=['pdf'])
+        bill_data = None
 
         if uploaded_file:
             st.success(f"✓ File uploaded: {uploaded_file.name}")
-
             with st.spinner("Extracting data from PDF..."):
                 bill_data = extract_pdf_data(uploaded_file)
 
@@ -213,15 +197,9 @@ with tabs[0]:
         st.subheader("3️⃣ Review & Match Results")
 
         df_items = pd.DataFrame(bill_data['items'])
-
-        # Add matching results
         df_items['Order Item'] = df_items['description'].apply(match_supplier_to_order)
+        df_items['Match Status'] = df_items['Order Item'].apply(lambda x: '✓ MATCHED' if x else '❌ NO MATCH')
 
-        df_items['Match Status'] = df_items['Order Item'].apply(
-            lambda x: '✓ MATCHED' if x else '❌ NO MATCH'
-        )
-
-        # Add expected quantities
         expected_qty_list = []
         for order_item in df_items['Order Item']:
             if order_item:
@@ -236,41 +214,34 @@ with tabs[0]:
 
         st.dataframe(df_items[['description', 'qty', 'Order Item', 'Expected Qty', 'Variance', 'Match Status']], use_container_width=True)
 
-        # Check for discrepancies
         discrepancies = df_items[df_items['Variance'] != 0]
         if len(discrepancies) > 0:
             st.warning(f"⚠️ Found {len(discrepancies)} discrepancies!")
             st.dataframe(discrepancies, use_container_width=True)
 
-        if st.button("✅ Confirm & Save to Tracker", key="confirm_bill"):
-            st.success("Bill saved to tracker! Tracking updated.")
+        if st.button("✅ Confirm & Save to Tracker"):
+            st.success("Bill saved! Tracking updated.")
             st.balloons()
 
 with tabs[1]:
     st.header("Order List from Google Sheets")
-
     if df_orders is not None:
         st.dataframe(df_orders, use_container_width=True)
-        st.info(f"Total items loaded: {len(df_orders)}")
+        st.info(f"Total items: {len(df_orders)}")
     else:
-        st.error("Could not load orders from Google Sheets. Check Secret Manager.")
+        st.error("Could not load orders.")
 
 with tabs[2]:
-    st.header("Dashboard Overview")
-
+    st.header("Dashboard")
     col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Total Bills", "0")
-    with col2:
-        st.metric("Matched Items", "0%")
-    with col3:
-        st.metric("Discrepancies", "0")
-    with col4:
-        st.metric("Over-billing", "0")
+    col1.metric("Total Bills", "0")
+    col2.metric("Matched", "0%")
+    col3.metric("Discrepancies", "0")
+    col4.metric("Over-billing", "0")
 
 with tabs[3]:
-    st.header("Reports & Analytics")
-    st.info("Reports feature coming soon...")
+    st.header("Reports")
+    st.info("Reports coming soon...")
 
 st.divider()
-st.caption("Bill Tracker System v2.2 | Google Secret Manager | Powered by Streamlit")
+st.caption("Bill Tracker v2.3 | Google Secret Manager | Streamlit")
