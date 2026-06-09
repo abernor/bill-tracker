@@ -1,41 +1,53 @@
-# Bill Tracker v2.1 - Safe Google Sheets Integration
+# Bill Tracker v2.2 - Google Secret Manager Integration
 import streamlit as st
 import pandas as pd
 import json
-import os
 from datetime import datetime
 import re
 from fuzzywuzzy import fuzz
 from PyPDF2 import PdfReader
 import gspread
 from google.oauth2 import service_account
+from google.cloud import secretmanager
 
 st.set_page_config(page_title="Bill Tracker System", layout="wide", initial_sidebar_state="expanded")
-st.write("VERSION: Google Sheets v2.1 (Safe)")
+st.write("VERSION: Google Secret Manager v2.2")
 
-# ===== GOOGLE SHEETS CONFIG (Safe - from environment variable) =====
+# ===== GOOGLE SHEETS CONFIG =====
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1SPd9zV8rB2sxOdFsfAfQeYhpu2PU3G9haJQ3UU1ce6s/edit"
+PROJECT_ID = "gen-lang-client-0946610758"
+SECRET_NAME = "bill-tracker-credentials"
+
+@st.cache_resource
+def load_credentials_from_secret():
+    """Load credentials dari Google Secret Manager"""
+    try:
+        client = secretmanager.SecretManagerServiceClient()
+        secret_path = f"projects/{PROJECT_ID}/secrets/{SECRET_NAME}/versions/latest"
+        response = client.access_secret_version(request={"name": secret_path})
+        secret_string = response.payload.data.decode('UTF-8')
+        return json.loads(secret_string)
+    except Exception as e:
+        st.error(f"❌ Error loading from Secret Manager: {str(e)}")
+        return None
 
 @st.cache_resource
 def load_google_sheet():
-    """Load order data from Google Sheets using environment variable credentials"""
+    """Load order data dari Google Sheets"""
     try:
-        # Read credentials from environment variable (set in Cloud Run)
-        creds_json_str = os.environ.get('GOOGLE_CREDENTIALS_JSON')
+        # Get credentials dari Secret Manager
+        creds_dict = load_credentials_from_secret()
 
-        if not creds_json_str:
-            st.error("❌ GOOGLE_CREDENTIALS_JSON environment variable not set")
+        if not creds_dict:
+            st.error("❌ Could not load credentials from Secret Manager")
             return None
 
-        # Parse JSON credentials
-        creds_dict = json.loads(creds_json_str)
-
-        # Authenticate with Google Sheets
+        # Authenticate dengan Google Sheets
         scope = ['https://www.googleapis.com/auth/spreadsheets']
         creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=scope)
         client = gspread.authorize(creds)
 
-        # Open sheet and load data
+        # Open sheet dan load data
         sheet = client.open_by_url(SHEET_URL)
         worksheet = sheet.worksheet(0)
         data = worksheet.get_all_records()
@@ -43,9 +55,6 @@ def load_google_sheet():
         st.success(f"✅ Loaded {len(data)} items from Google Sheets")
         return pd.DataFrame(data)
 
-    except json.JSONDecodeError:
-        st.error("❌ Invalid JSON in GOOGLE_CREDENTIALS_JSON")
-        return None
     except Exception as e:
         st.error(f"❌ Error loading Google Sheet: {str(e)}")
         return None
@@ -248,7 +257,7 @@ with tabs[1]:
         st.dataframe(df_orders, use_container_width=True)
         st.info(f"Total items loaded: {len(df_orders)}")
     else:
-        st.error("Could not load orders from Google Sheets. Check environment variable.")
+        st.error("Could not load orders from Google Sheets. Check Secret Manager.")
 
 with tabs[2]:
     st.header("Dashboard Overview")
@@ -268,4 +277,4 @@ with tabs[3]:
     st.info("Reports feature coming soon...")
 
 st.divider()
-st.caption("Bill Tracker System v2.1 | Google Sheets Integration | Powered by Streamlit")
+st.caption("Bill Tracker System v2.2 | Google Secret Manager | Powered by Streamlit")
