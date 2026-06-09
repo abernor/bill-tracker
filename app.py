@@ -75,7 +75,7 @@ def load_google_sheet():
         )
 
 
-        client = gspread.authorize(creds)
+        client = gspread.Client(auth=creds)
 
         sheet = client.open_by_url(SHEET_URL)
 
