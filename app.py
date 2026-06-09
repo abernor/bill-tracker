@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from fuzzywuzzy import fuzz
 from fuzzywuzzy import process
-import PyPDF2
+import PyPDF
 
 st.set_page_config(page_title="Bill Tracker System", layout="wide", initial_sidebar_state="expanded")
 
